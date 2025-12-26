@@ -86,7 +86,8 @@ for arg in "$@"; do
             if [ $rc -ne 0 ]; then
                 exit 1
             fi
-            c_file="${temp_f_file%.f}.c"
+	    temp_basename=$(basename "$temp_f_file")
+            c_file="${temp_basename%.f}.c"
 
             GCC_INPUTS+=("$c_file")
             TEMP_FILES+=("$c_file")
