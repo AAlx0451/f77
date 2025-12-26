@@ -3,10 +3,32 @@
 
 VERSION="f77 version 20240504" # current f2c --help version output. this tool is designed for latest f2c from netlib. anyway the changes are small, so you can use ANY f2c
 
+# to be pretty, we need to check if we are a tty ^^
+if [ -t 2 ]; then
+    BOLD_RED=$(printf '\033[1;31m')
+    BOLD_MAGENTA=$(printf '\033[1;35m')
+    RESET=$(printf '\033[0m')
+else
+    BOLD_RED=""
+    BOLD_MAGENTA=""
+    RESET=""
+fi
+
+# make error bold red
+error_msg() {
+    printf "f77: %serror:%s %s\n" "$BOLD_RED" "$RESET" "$1" >&2
+}
+
+# format f2c errors and warnings to be pretty
+format_f2c_output() {
+    local original_filename=$1
+    sed -E \
+        -e "s/^Error on line ([0-9]+) of [^:]+: (.*)/${original_filename}:\1: ${BOLD_RED}error:${RESET} \2/" \
+        -e "s/^Warning on line ([0-9]+)( of [^:]+)?: (.*)/${original_filename}:\1: ${BOLD_MAGENTA}warning:${RESET} \3/" >&2
+}
 
 CC="${CC:-cc}"
 CFLAGS="-O3 -w" # FORTRAN must be fast. If you don't have a GCC-like CC, use -O
-# -O4 is deprecated, RIP :(
 
 LIBS="-lf2c -lm"
 
@@ -57,12 +79,12 @@ for arg in "$@"; do
 done
 
 if ! command -v f2c >/dev/null 2>&1; then
-    echo "f77: error: 'f2c' not found." >&2
+    error_msg "'f2c' not found."
     exit 127
 fi
 
 if [ $# -eq 0 ]; then
-    echo "f77: error: no input files"
+    error_msg "no input files"
     exit 1
 fi
 
@@ -71,7 +93,7 @@ for arg in "$@"; do
         *.f77) # explained below
             temp_f_file=$(mktemp --suffix=.f)
             if ! cp "$arg" "$temp_f_file"; then
-                echo "f77: error: failed to create temporary file for '$arg'" >&2
+                error_msg "failed to create temporary file for '$arg'"
                 exit 1
             fi
             TEMP_FILES+=("$temp_f_file")
@@ -81,12 +103,14 @@ for arg in "$@"; do
 
             f2c "$temp_f_file" > "$LOGFILE" 2>&1
             rc=$?
-            grep "Error" "$LOGFILE" >&2
+            
+            grep -E "^(Error|Warning)" "$LOGFILE" | format_f2c_output "$arg"
 
             if [ $rc -ne 0 ]; then
                 exit 1
             fi
-	    temp_basename=$(basename "$temp_f_file")
+
+            temp_basename=$(basename "$temp_f_file")
             c_file="${temp_basename%.f}.c"
 
             GCC_INPUTS+=("$c_file")
@@ -99,8 +123,9 @@ for arg in "$@"; do
 
             f2c "$arg" > "$LOGFILE" 2>&1
             rc=$?
-            grep "Error" "$LOGFILE" >&2
 
+            grep -E "^(Error|Warning)" "$LOGFILE" | format_f2c_output "$arg"
+            
             if [ $rc -ne 0 ]; then
                 exit 1
             fi
