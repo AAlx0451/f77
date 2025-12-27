@@ -10,11 +10,12 @@ Simple compiler driver for Fortran 77
 
 ## Advantages 
 
-* .f77 files support
-* all gcc flags direct usage (including `-c`, `-o`, `-O`)
+* `.f77` files support
+* all `gcc` and `f2c` flags direct usage (including `-c`, `-o`, `-On`, `-P` `-In`, `-U`, etc.)
 * no build artifacts, just a binary
 * `-O3` by default
 * `error:` and `warning:` highlighting (even for f2c!)
+* preprocessing for `.F` files
 
 ## License
 
