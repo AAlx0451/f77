@@ -1,7 +1,7 @@
 #!/bin/bash
 # f77/66/IV - like (posix) c99, but f77 :)
 
-VERSION="f77 version 20240504 (wraps f2c)" # current f2c --help version output. this tool is designed for latest f2c from netlib. anyway the changes are small, so you can use ANY f2c
+VERSION="f77 version 20240505 (wraps f2c)" # updated version
 
 # to be pretty, we need to check if we are a tty ^^
 if [ -t 2 ]; then
@@ -38,6 +38,8 @@ declare -a F2C_OPTS
 declare -a CPP_OPTS
 declare -a CC_OPTS
 declare -a INPUT_FILES
+declare -a EXTERN_FUNCS # array to store functions passed via --extern
+declare -a BYVAL_RULES  # array to store byval rules (func=arg_index)
 
 LINKER_FLAG=1
 OUTPUT_FILE=""
@@ -105,6 +107,8 @@ Options:
   -!i8         Disallow INTEGER*8.
   -!it         Don't infer types of untyped EXTERNAL procedures.
   -!P          Do not attempt to infer ANSI or C++ prototypes from usage.
+  --extern=fn  Replace fn_ with fn in generated C code (C linkage interop).
+  --byval=fn=N Remove '&' from N-th argument of function fn (1-based index).
   --help       Display this information.
   --version    Display compiler version information.
 EOF
@@ -136,6 +140,14 @@ while [ $# -gt 0 ]; do
             ;;
         --version)
             show_version
+            ;;
+        --extern=*)
+            # extract the function name and add it to the array
+            EXTERN_FUNCS+=("${arg#--extern=}")
+            ;;
+        --byval=*)
+            # extract rule: function_name=arg_number
+            BYVAL_RULES+=("${arg#--byval=}")
             ;;
         -o)
             if [ -z "$2" ]; then
@@ -193,7 +205,7 @@ for input_file in "${INPUT_FILES[@]}"; do
     filename=$(basename "$input_file")
     extension="${filename##*.}"
     f2c_input="$input_file"
-    
+
     declare -a CURRENT_F2C_OPTS=("${F2C_OPTS[@]}")
 
     if [[ "$extension" =~ ^(f66|F66)$ ]]; then
@@ -201,7 +213,7 @@ for input_file in "${INPUT_FILES[@]}"; do
     fi
 
     # Capitalized extensions imply C Preprocessor
-        if [[ "$extension" =~ ^(F|F77|F66|FOR)$ ]]; then
+    if [[ "$extension" =~ ^(F|F77|F66|FOR)$ ]]; then
         if ! command -v "$CPP" >/dev/null 2>&1; then
             error_msg "preprocessing requested (.$extension file) but '$CPP' not found."
             exit 127
@@ -228,8 +240,6 @@ for input_file in "${INPUT_FILES[@]}"; do
     fi
 
     # Non-standard extensions (not .f or .F) need to be renamed/copied to .f for f2c
-    # This covers .f77, .f66, .for (lowercase)
-    # We skip this if we already preprocessed it (which outputs a .f file anyway)
     if [[ "$extension" =~ ^(f77|f66|for)$ ]]; then
         temp_conv=$(mktemp --suffix=.f)
         TEMP_FILES+=("$temp_conv")
@@ -266,6 +276,58 @@ for input_file in "${INPUT_FILES[@]}"; do
     generated_c_file="${base_name}.c"
 
     if [ -f "$generated_c_file" ]; then
+        
+        # 1. Apply --extern replacements (renaming func_ to func)
+        if [ ${#EXTERN_FUNCS[@]} -gt 0 ]; then
+            SED_CMD=""
+            for efunc in "${EXTERN_FUNCS[@]}"; do
+                # use \b (word boundary) to prevent accidental substring replacements
+                SED_CMD+="s/\b${efunc}_\b/${efunc}/g; "
+            done
+            temp_c=$(mktemp)
+            sed -E "$SED_CMD" "$generated_c_file" > "$temp_c"
+            cat "$temp_c" > "$generated_c_file"
+            rm -f "$temp_c"
+        fi
+
+        # 2. Apply --byval replacements (removing & from specific args)
+        if [ ${#BYVAL_RULES[@]} -gt 0 ]; then
+            SED_CMD=""
+            for rule in "${BYVAL_RULES[@]}"; do
+                # Split rule func=arg_num
+                func_name="${rule%%=*}"
+                arg_num="${rule##*=}"
+                
+                # Validation: arg_num must be an integer
+                if ! [[ "$arg_num" =~ ^[0-9]+$ ]]; then
+                    error_msg "invalid argument number in --byval=$rule"
+                    continue
+                fi
+
+                if [ "$arg_num" -eq 1 ]; then
+                    # For 1st argument: find 'func(', match whitespaces, remove '&'
+                    # Regex: replace (func\s*\()\s*& with \1
+                    SED_CMD+="s/(\b${func_name}\s*\()\s*&/\1/g; "
+                else
+                    # For N-th argument: we need to skip N-1 arguments (separated by commas)
+                    # We build a regex that matches N-1 groups of "non-comma chars followed by comma"
+                    repeat_count=$((arg_num - 1))
+                    
+                    # Pattern explanation:
+                    # \b${func_name}\s*\(       -> match function name and open parenthesis
+                    # ([^,)]+,[[:space:]]*){K}  -> match K arguments (non-comma/paren chars + comma + optional space)
+                    # \s*&                      -> match the target ampersand (to be removed)
+                    
+                    SED_CMD+="s/(\b${func_name}\s*\(([^,)]+,[[:space:]]*){${repeat_count}})\s*&/\1/g; "
+                fi
+            done
+            
+            temp_c=$(mktemp)
+            sed -E "$SED_CMD" "$generated_c_file" > "$temp_c"
+            cat "$temp_c" > "$generated_c_file"
+            rm -f "$temp_c"
+        fi
+
         GCC_INPUTS+=("$generated_c_file")
         TEMP_FILES+=("$generated_c_file")
     fi
@@ -277,11 +339,3 @@ if [ ${#GCC_INPUTS[@]} -gt 0 ]; then
 fi
 
 exit 0
-
-# .f77 I/O operations explanation:
-# idk why, but f2c allows .f or .F files
-# only. but now F77 code is
-# usually .f77, and dinosaurs use .f66
-
-# grep operations explanation:
-# idk why, but f2c always writes to stderr :(

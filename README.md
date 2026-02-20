@@ -19,6 +19,10 @@ Simple compiler driver for Fortran 77 (& IV/66)
 * full f66 support:
     * you can f77 as `./f66` and it'll act as FORTRAN66 compiler
     * for `.{f,F}66` files F66 behavior with any name
+* c api:
+    * --extern= to call pure c functions
+    * --byval=func= to call c by-value functions
+    * (wip) libC bindings
 
 ## License
 
