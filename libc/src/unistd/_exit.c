@@ -1,6 +1,9 @@
 #include <unistd.h>
+#include <f2c.h>
 
-void iexitvp__(int* statusptr)
+void ipexit_(integer* statusptr) /* i -- void (non-real)
+                                  * p -- posix (not exit())
+                                  */
 {
     int status = 0;
     if (statusptr) status = *statusptr;
